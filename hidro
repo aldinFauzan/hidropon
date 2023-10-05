@@ -121,8 +121,8 @@ void tdsSensor() {
       // Serial.print("TDS Value:");
       // Serial.print(tdsValue, 0);
       // Serial.println(" ppm");
-      lcd.setCursor(0, 1);
-      lcd.print("PPM : " + String(tdsValue));
+      // lcd.setCursor(0, 1);
+      // lcd.print("PPM : " + String(tdsValue));
 
       //Blynk.virtualWrite(V1, tdsValue);
     }
@@ -226,19 +226,12 @@ void volFlow2() {
 void increase1() {
   pulse1++;
   lastPulseTime1 = millis();  // Perbarui waktu terakhir pulse bertambah
-  digitalWrite(relayV1Pin, LOW);
-  digitalWrite(relayV2Pin, HIGH);
+  // digitalWrite(relayV1Pin, LOW);
+  // digitalWrite(relayV2Pin, LOW);
 
   if (pulse1 == 19) {
     digitalWrite(relayV1Pin, HIGH);
-    delay(5000);
-    digitalWrite(relayV2Pin, LOW);
-
-    if (pulse1 >= 19) {
-      digitalWrite(relayV2Pin, HIGH);
-      digitalWrite(relayV1Pin, HIGH);
-      delay(2000);
-    }
+    digitalWrite(relayV2Pin, HIGH);
   }
 
   // Cek apakah pulse tidak bertambah dalam 2 detik terakhir
@@ -247,7 +240,7 @@ void increase1() {
   //   pulse1 = 0;
 
 
-  //   //19    = 19   ML
+  //   //19    = 50   ML
   //   //225   = 600  ML
   //   //1879  = 5000 ML
   // }
@@ -256,7 +249,7 @@ void increase1() {
 void increase2() {
   pulse2++;
   lastPulseTime2 = millis();  // Perbarui waktu terakhir pulse bertambah
-  digitalWrite(relayPoPin, LOW);
+  // digitalWrite(relayPoPin, LOW);
   if (pulse2 >= 1879) {
     digitalWrite(relayPoPin, HIGH);
     Serial.print("MATI");
@@ -301,67 +294,75 @@ void setup() {
   lcd.backlight();
 }
 
-void print() {
+void print1() {
 
   lcd.setCursor(0, 0);
-  lcd.print("SUHU: " + String(celsius) + " C");
+  lcd.print("air : Penuh|MOD NUT");
 
   lcd.setCursor(0, 1);
-  lcd.print("PPM : " + String(tdsValue));
+  lcd.print("Tem: " + String(celsius) + " C");
 
   lcd.setCursor(0, 2);
-  lcd.print("Air bersih" + String(volume1) + " mL/s");
+  lcd.print("PPM : " + String(tdsValue));
+}
+
+void print2() {
+  
+  lcd.setCursor(0, 0);
+  lcd.print("Air: Kosong|MOD NUT");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Air " + String(volume1) + "ML");
+
+  lcd.setCursor(0, 2);
   lcd.print("nutrisi" + String(volume2) + " mL/s");
+
+  lcd.setCursor(0, 3);
+  lcd.print("PPM : " + String(tdsValue));
+
+  
 }
 
 void loop() {
   int waterLevelSensorValue = digitalRead(waterLevelSensorPin);
-
   tdsSensor();
   dsSensor();
 
-  if (waterLevelSensorValue == HIGH) {
+  // if (waterLevelSensorValue == HIGH) {
 
+  //   mode = 0;
+  //   // lcd.setCursor(0, 3);
+  //   // lcd.print("WL  : Penuh ");
+
+  // } else {
+  //   mode = 1;
+  //   // lcd.setCursor(0, 3);
+  //   // lcd.print("WL  : Kosong");
+  //   // digitalWrite(relayPoPin, LOW);
+  //   // digitalWrite(relayMoPin, LOW);
+  //   // digitalWrite(relayV1Pin, LOW);
+  //   // digitalWrite(relayV2Pin, LOW);
+  // }
+  // delay(1000);
+  // lcd.clear();
+
+  if (tdsValue > 0 || waterLevelSensorValue == HIGH || celsius > 29) {
     mode = 0;
-    lcd.setCursor(0, 3);
-    lcd.print("WL  : Penuh ");
+    print1();
 
+    // digitalWrite(relayV1Pin, LOW);
+    // digitalWrite(relayV2Pin, LOW);
+    // volFlow1();
+    // digitalWrite(relayV1Pin, HIGH);
+    // digitalWrite(relayV2Pin, HIGH);
+    // volFlow2();
   } else {
     mode = 1;
-    lcd.setCursor(0, 3);
-    lcd.print("WL  : Kosong");
-    digitalWrite(relayPoPin, LOW);
-    digitalWrite(relayMoPin, LOW);
-    digitalWrite(relayV1Pin, LOW);
-    digitalWrite(relayV2Pin, LOW);
-  }
-  delay(1000);
-  lcd.clear();
+    print2();
 
-  if (tdsValue > 500 || waterLevelSensorValue == LOW || celsius > 29) {
-    digitalWrite(relayV1Pin, LOW);
-    digitalWrite(relayV2Pin, LOW);
-    volFlow1();
-    digitalWrite(relayV1Pin, HIGH);
-    digitalWrite(relayV2Pin, HIGH);
-    volFlow2();
-  }
-  if (tdsValue > 1500) {
-    digitalWrite(relayPoPin, LOW);
-    volFlow2();
-    digitalWrite(relayPoPin, HIGH);
-
-  } else {
   }
 
   //delay (15000);
-
-  if (LCDMillis >= LCDInter) {
-    print();
-    LCDMillis = 0;
-
-  }
-
   Serial.print("TDS Value:");
   Serial.print(tdsValue, 0);
   Serial.println(" ppm");
@@ -383,20 +384,20 @@ void loop() {
 
   if (mode == 0) {
 
-    lcd.setCursor(0, 3);
-    lcd.print("air : Penuh | MOD NUT");
+    lcd.clear();
+    delay(1000);
 
     digitalWrite(relayMoPin, HIGH);
     digitalWrite(relayPoPin, HIGH);
     digitalWrite(relayV1Pin, HIGH);
     digitalWrite(relayV2Pin, HIGH);
     delay(1000);
-    lcd.clear;
+    lcd.clear();
 
   } else if (mode == 1) {
-    
-    lcd.setCursor(0, 3);
-    lcd.print("Air: Kosong | MOD NUT");
+
+    lcd.clear();
+    delay(1000);
 
     digitalWrite(relayPoPin, LOW);
     digitalWrite(relayMoPin, LOW);
@@ -407,6 +408,6 @@ void loop() {
     volFlow2();
 
     delay(1000);
-    lcd.clear;
+    lcd.clear();
   }
 }
