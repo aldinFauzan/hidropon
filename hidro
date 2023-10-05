@@ -1,0 +1,384 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <OneWire.h>
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <elapsedMillis.h>
+
+
+// Configuration lcd
+LiquidCrystal_I2C lcd(0x27, 20, 4);
+
+// Component pins
+const int waterLevelSensorPin = 2;  // default 2 // ESP32
+int flow1 = 36;
+int flow2 = 13;
+const int relayV1Pin = 25;  // ESP32
+const int relayV2Pin = 27;  // ESP32
+const int relayPoPin = 16;  // ESP32
+const int relayMoPin = 4;   // ESP32
+
+
+// Confiration DS18B20 Sensor
+OneWire ds(15);  // ESP32
+float celsius;
+
+// Kebutuhan PPM
+int kebutuhanPPM[] = {
+  0, 20, 40, 60, 80, 100, 120, 140, 160, 180, 200,
+  220, 240, 260, 280, 300, 320, 340, 360, 380, 400, 420
+};
+
+// Variable flow sensors
+volatile long pulse1;
+float volume1;
+unsigned long lastPulseTime1 = 0;       // Waktu terakhir pulse bertambah
+const unsigned long resetTime1 = 2000;  // Waktu dalam milidetik (2 detik)
+
+volatile long pulse2;
+float volume2;
+unsigned long lastPulseTime2 = 0;       // Waktu terakhir pulse bertambah
+const unsigned long resetTime2 = 2000;  // Waktu dalam milidetik (2 detik)
+
+
+
+#define TdsSensorPin 33  // ESP32
+#define VREF 3.3
+#define SCOUNT 30
+
+int analogBuffer[SCOUNT];
+int analogBufferTemp[SCOUNT];
+int analogBufferIndex = 0;
+int copyIndex = 0;
+int waterLevelSensorValue;
+
+float averageVoltage = 0;
+float tdsValue = 0;
+float temperature = 25;
+
+elapsedMillis LCDMillis;
+unsigned long LCDInter = 2000;
+
+// TDS Sensor
+// median filtering algorithm
+int getMedianNum(int bArray[], int iFilterLen) {
+  int bTab[iFilterLen];
+  for (byte i = 0; i < iFilterLen; i++)
+    bTab[i] = bArray[i];
+  int i, j, bTemp;
+  for (j = 0; j < iFilterLen - 1; j++) {
+    for (i = 0; i < iFilterLen - j - 1; i++) {
+      if (bTab[i] > bTab[i + 1]) {
+        bTemp = bTab[i];
+        bTab[i] = bTab[i + 1];
+        bTab[i + 1] = bTemp;
+      }
+    }
+  }
+  if ((iFilterLen & 1) > 0) {
+    bTemp = bTab[(iFilterLen - 1) / 2];
+  } else {
+    bTemp = (bTab[iFilterLen / 2] + bTab[iFilterLen / 2 - 1]) / 2;
+  }
+  return bTemp;
+}
+
+
+
+void tdsSensor() {
+  static unsigned long analogSampleTimepoint = millis();
+  if (millis() - analogSampleTimepoint > 40U) {
+    analogSampleTimepoint = millis();
+    analogBuffer[analogBufferIndex] = analogRead(TdsSensorPin);
+    analogBufferIndex++;
+    if (analogBufferIndex == SCOUNT) {
+      analogBufferIndex = 0;
+    }
+  }
+
+  static unsigned long printTimepoint = millis();
+  if (millis() - printTimepoint > 800U) {
+    printTimepoint = millis();
+    for (copyIndex = 0; copyIndex < SCOUNT; copyIndex++) {
+      analogBufferTemp[copyIndex] = analogBuffer[copyIndex];
+
+      // read the analog value more stable by the median filtering algorithm, and convert to voltage value
+      averageVoltage = getMedianNum(analogBufferTemp, SCOUNT) * (float)VREF / 4096.0;
+
+      //temperature compensation formula: fFinalResult(25^C) = fFinalResult(current)/(1.0+0.02*(fTP-25.0));
+      float compensationCoefficient = 1.0 + 0.02 * (temperature - 25.0);
+      //temperature compensation
+      float compensationVoltage = averageVoltage / compensationCoefficient;
+
+      //convert voltage value to tds value
+      tdsValue = (133.42 * compensationVoltage * compensationVoltage * compensationVoltage - 255.86 * compensationVoltage * compensationVoltage + 857.39 * compensationVoltage) * 0.5;
+
+      //Serial.print("voltage:");
+      //Serial.print(averageVoltage,2);
+      //Serial.print("V   ");
+      // Serial.print("TDS Value:");
+      // Serial.print(tdsValue, 0);
+      // Serial.println(" ppm");
+      lcd.setCursor(0, 1);
+      lcd.print("PPM : " + String(tdsValue));
+
+      //Blynk.virtualWrite(V1, tdsValue);
+    }
+  }
+}
+
+// DS (Temperature) Sensor
+void dsSensor(void) {
+  byte i;
+  byte present = 0;
+  byte type_s;
+  byte data[12];
+  byte addr[8];
+
+  if (!ds.search(addr)) {
+    ds.reset_search();
+    delay(250);
+    return;
+  }
+
+  if (OneWire::crc8(addr, 7) != addr[7]) {
+    Serial.println("CRC is not valid!");
+    return;
+  }
+  Serial.println();
+
+  // the first ROM byte indicates which chip
+  switch (addr[0]) {
+    case 0x10:
+      type_s = 1;
+      break;
+    case 0x28:
+      type_s = 0;
+      break;
+    case 0x22:
+      type_s = 0;
+      break;
+    default:
+      lcd.clear();
+      lcd.setCursor(0, 1);
+      lcd.print("Not Found");
+      delay(2000);
+      lcd.clear();
+      Serial.println("Device is not a DS18x20 family device.");
+      return;
+  }
+
+  ds.reset();
+  ds.select(addr);
+  ds.write(0x44, 1);  // start conversion, with parasite power on at the end
+  delay(1000);
+  present = ds.reset();
+  ds.select(addr);
+  ds.write(0xBE);  // Read Scratchpad
+
+  for (i = 0; i < 9; i++) {
+    data[i] = ds.read();
+  }
+
+  // Convert the data to actual temperature
+  int16_t raw = (data[1] << 8) | data[0];
+  if (type_s) {
+    raw = raw << 3;  // 9 bit resolution default
+    if (data[7] == 0x10) {
+      raw = (raw & 0xFFF0) + 12 - data[6];
+    }
+  } else {
+    byte cfg = (data[4] & 0x60);
+    if (cfg == 0x00) raw = raw & ~7;       // 9 bit resolution, 93.75 ms
+    else if (cfg == 0x20) raw = raw & ~3;  // 10 bit res, 187.5 ms
+    else if (cfg == 0x40) raw = raw & ~1;  // 11 bit res, 375 ms
+  }
+  celsius = (float)raw / 16.0;
+  // Serial.print("Temperature = ");
+  // Serial.print(celsius);
+  // Serial.print(" Celsius ");
+  lcd.setCursor(0, 0);
+  lcd.print("SUHU: " + String(celsius) + " C");
+}
+void volFlow1() {
+  volume1 = 2.66 * pulse1;
+  // Serial.println("ML air = " + String(volume1) + "ML");
+  // Serial.println("pulse  = " + String(pulse1));
+    if (millis() - lastPulseTime1 >= resetTime1) {
+    pulse1 = 0;  // Reset nilai pulse menjadi 0
+    Serial.println("pulse direset");
+  }
+}
+void volFlow2() {
+  volume2 = 2.66 * pulse2;
+  // Serial.println("ML air = " + String(volume2) + "ML");
+  // Serial.println("pulse  = " + String(pulse2));
+
+  // Cek apakah pulse tidak bertambah dalam 2 detik terakhir
+  if (millis() - lastPulseTime2 >= resetTime2) {
+    pulse2 = 0;  // Reset nilai pulse menjadi 0
+    Serial.println("pulse direset");
+  }
+}
+
+void increase1() {
+  pulse1++;
+  lastPulseTime1 = millis();  // Perbarui waktu terakhir pulse bertambah
+  digitalWrite(relayV1Pin, LOW);
+  digitalWrite(relayV2Pin, HIGH);
+
+  if (pulse1 == 19) {
+    digitalWrite(relayV1Pin, HIGH);
+    delay(5000);
+    digitalWrite(relayV2Pin, LOW);
+
+    if (pulse1 >= 19) {
+      digitalWrite(relayV2Pin, HIGH);
+      digitalWrite(relayV1Pin, HIGH);
+      delay(2000);
+    }
+  }
+
+  // Cek apakah pulse tidak bertambah dalam 2 detik terakhir
+
+  // if (pulse1 == 225){
+  //   pulse1 = 0;
+
+
+  //   //19    = 19   ML
+  //   //225   = 600  ML
+  //   //1879  = 5000 ML
+  // }
+}
+
+void increase2() {
+  pulse2++;
+  lastPulseTime2 = millis();  // Perbarui waktu terakhir pulse bertambah
+  digitalWrite(relayPoPin, LOW);
+  if (pulse2 >= 1879) {
+    digitalWrite(relayPoPin,HIGH);
+    Serial.print("MATI");
+  }
+
+
+  // if (pulse2 == 1879){
+  //   pulse2 = 0;
+
+
+  //   //19    = 19   ML
+  //   //225   = 600  ML
+  //   //1879  = 5000 ML
+  // }
+}
+
+
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(TdsSensorPin, INPUT);
+  pinMode(waterLevelSensorPin, INPUT_PULLUP);
+  pinMode(flow1, INPUT);
+  pinMode(flow2, INPUT);
+
+  pinMode(relayV1Pin, OUTPUT);
+  pinMode(relayV2Pin, OUTPUT);
+  pinMode(relayPoPin, OUTPUT);
+  pinMode(relayMoPin, OUTPUT);
+
+
+  // Relay Low
+  digitalWrite(relayV1Pin, HIGH);
+  digitalWrite(relayV2Pin, HIGH);
+  digitalWrite(relayPoPin, HIGH);
+  digitalWrite(relayMoPin, HIGH);
+
+  attachInterrupt(digitalPinToInterrupt(flow1), increase1, RISING);
+  attachInterrupt(digitalPinToInterrupt(flow2), increase2, RISING);
+
+  lcd.begin();
+  lcd.backlight();
+}
+
+void print() {
+
+  lcd.setCursor(0, 1);
+  lcd.print("PPM : " + String(tdsValue));
+
+  lcd.setCursor(0, 2);
+  lcd.print("Air bersih" + String(volume1) + " mL/s");
+  lcd.print("nutrisi" + String(volume2) + " mL/s");
+}
+
+void loop() {
+  int waterLevelSensorValue = digitalRead(waterLevelSensorPin);
+
+  tdsSensor();
+  dsSensor();
+
+  if (waterLevelSensorValue == HIGH) {
+    lcd.setCursor(0, 3);
+    lcd.print("WL  : Penuh ");
+    digitalWrite(relayMoPin, HIGH);
+    digitalWrite(relayPoPin, HIGH);
+    digitalWrite(relayV1Pin, HIGH);
+    digitalWrite(relayV2Pin, HIGH);
+  } else {
+    lcd.setCursor(0, 3);
+    lcd.print("WL  : Kosong");
+    digitalWrite(relayPoPin, LOW);
+    digitalWrite(relayMoPin, LOW);
+    digitalWrite(relayV1Pin, LOW);
+    digitalWrite(relayV2Pin, LOW);
+
+
+  }
+  delay(1000);
+  lcd.clear();
+
+  if (tdsValue > 500 || waterLevelSensorValue == LOW) {
+    digitalWrite(relayV1Pin, LOW);
+    digitalWrite(relayV2Pin, LOW);
+    volFlow1();
+    digitalWrite(relayV1Pin, HIGH);
+    digitalWrite(relayV2Pin, HIGH);
+    volFlow2();
+  }
+  if (tdsValue > 1500) {
+    digitalWrite(relayPoPin, LOW);
+    volFlow2();
+    digitalWrite(relayPoPin, HIGH);
+
+  } else {
+  }
+
+  if (celsius > 29) {
+    digitalWrite(relayPoPin, LOW);
+    digitalWrite(relayMoPin, LOW);
+  } else {
+  }
+  //delay (15000);
+
+  if (LCDMillis >= LCDInter) {
+    print();
+    LCDMillis = 0;
+  }
+
+  Serial.print("TDS Value:");
+  Serial.print(tdsValue, 0);
+  Serial.println(" ppm");
+  Serial.println();
+  delay(2000);
+  Serial.print("Temperature = ");
+  Serial.print(celsius);
+  Serial.print(" Celsius ");
+  Serial.println();
+  delay(2000);
+  Serial.println("ML air 1 = " + String(volume1) + "ML");
+  Serial.println("pulse  = " + String(pulse1));
+  Serial.println();
+  // delay(2000);
+  Serial.println("ML air 2 = " + String(volume2) + "ML");
+  Serial.println("pulse  = " + String(pulse2));
+  Serial.println();
+  delay(1000);
+}
