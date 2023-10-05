@@ -5,6 +5,8 @@
 #include <WiFiClient.h>
 #include <elapsedMillis.h>
 
+bool mode = false;
+
 
 // Configuration lcd
 LiquidCrystal_I2C lcd(0x27, 20, 4);
@@ -197,14 +199,14 @@ void dsSensor(void) {
   // Serial.print("Temperature = ");
   // Serial.print(celsius);
   // Serial.print(" Celsius ");
-  lcd.setCursor(0, 0);
-  lcd.print("SUHU: " + String(celsius) + " C");
+  // lcd.setCursor(0, 0);
+  // lcd.print("SUHU: " + String(celsius) + " C");
 }
 void volFlow1() {
   volume1 = 2.66 * pulse1;
   // Serial.println("ML air = " + String(volume1) + "ML");
   // Serial.println("pulse  = " + String(pulse1));
-    if (millis() - lastPulseTime1 >= resetTime1) {
+  if (millis() - lastPulseTime1 >= resetTime1) {
     pulse1 = 0;  // Reset nilai pulse menjadi 0
     Serial.println("pulse direset");
   }
@@ -256,7 +258,7 @@ void increase2() {
   lastPulseTime2 = millis();  // Perbarui waktu terakhir pulse bertambah
   digitalWrite(relayPoPin, LOW);
   if (pulse2 >= 1879) {
-    digitalWrite(relayPoPin,HIGH);
+    digitalWrite(relayPoPin, HIGH);
     Serial.print("MATI");
   }
 
@@ -301,6 +303,9 @@ void setup() {
 
 void print() {
 
+  lcd.setCursor(0, 0);
+  lcd.print("SUHU: " + String(celsius) + " C");
+
   lcd.setCursor(0, 1);
   lcd.print("PPM : " + String(tdsValue));
 
@@ -316,26 +321,24 @@ void loop() {
   dsSensor();
 
   if (waterLevelSensorValue == HIGH) {
+
+    mode = 0;
     lcd.setCursor(0, 3);
     lcd.print("WL  : Penuh ");
-    digitalWrite(relayMoPin, HIGH);
-    digitalWrite(relayPoPin, HIGH);
-    digitalWrite(relayV1Pin, HIGH);
-    digitalWrite(relayV2Pin, HIGH);
+
   } else {
+    mode = 1;
     lcd.setCursor(0, 3);
     lcd.print("WL  : Kosong");
     digitalWrite(relayPoPin, LOW);
     digitalWrite(relayMoPin, LOW);
     digitalWrite(relayV1Pin, LOW);
     digitalWrite(relayV2Pin, LOW);
-
-
   }
   delay(1000);
   lcd.clear();
 
-  if (tdsValue > 500 || waterLevelSensorValue == LOW) {
+  if (tdsValue > 500 || waterLevelSensorValue == LOW || celsius > 29) {
     digitalWrite(relayV1Pin, LOW);
     digitalWrite(relayV2Pin, LOW);
     volFlow1();
@@ -351,16 +354,12 @@ void loop() {
   } else {
   }
 
-  if (celsius > 29) {
-    digitalWrite(relayPoPin, LOW);
-    digitalWrite(relayMoPin, LOW);
-  } else {
-  }
   //delay (15000);
 
   if (LCDMillis >= LCDInter) {
     print();
     LCDMillis = 0;
+
   }
 
   Serial.print("TDS Value:");
@@ -381,4 +380,33 @@ void loop() {
   Serial.println("pulse  = " + String(pulse2));
   Serial.println();
   delay(1000);
+
+  if (mode == 0) {
+
+    lcd.setCursor(0, 3);
+    lcd.print("air : Penuh | MOD NUT");
+
+    digitalWrite(relayMoPin, HIGH);
+    digitalWrite(relayPoPin, HIGH);
+    digitalWrite(relayV1Pin, HIGH);
+    digitalWrite(relayV2Pin, HIGH);
+    delay(1000);
+    lcd.clear;
+
+  } else if (mode == 1) {
+    
+    lcd.setCursor(0, 3);
+    lcd.print("Air: Kosong | MOD NUT");
+
+    digitalWrite(relayPoPin, LOW);
+    digitalWrite(relayMoPin, LOW);
+    digitalWrite(relayV1Pin, LOW);
+    digitalWrite(relayV2Pin, LOW);
+
+    volFlow1();
+    volFlow2();
+
+    delay(1000);
+    lcd.clear;
+  }
 }
